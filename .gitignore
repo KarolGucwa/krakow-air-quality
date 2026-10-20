@@ -41,6 +41,3 @@ derby.log
 spark-warehouse/
 warehouse/spark-warehouse/
 dbt/target_spark/
-
-# Local Claude Code settings
-.claude/

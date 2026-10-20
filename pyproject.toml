@@ -16,6 +16,8 @@ dependencies = [
   "pyyaml>=6",
   "openpyxl>=3.1",
   "duckdb>=1.1",
+  "numpy>=1.26",
+  "scipy>=1.11",                # synthetic demo data (sample_data.py)
 ]
 
 [project.scripts]

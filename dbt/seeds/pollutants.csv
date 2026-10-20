@@ -1,0 +1,3 @@
+pollutant_code,pollutant_name,who_24h_ugm3,who_annual_ugm3,eu_24h_limit_ugm3,eu_24h_allowed_exceedances,eu_annual_limit_ugm3,max_plausible_ugm3
+PM10,Particulate matter PM10,45,15,50,35,40,1000
+PM2.5,Particulate matter PM2.5,15,5,,,25,800

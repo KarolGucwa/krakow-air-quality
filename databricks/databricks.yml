@@ -1,0 +1,82 @@
+# Databricks Asset Bundle: the extended version of the pipeline on Databricks Free Edition.
+#   databricks bundle validate
+#   databricks bundle deploy -t dev
+#   databricks bundle run krakow_air_daily -t dev
+# Requires the Databricks CLI (>= 0.230) authenticated to your workspace.
+# Status: prepared, not yet run end-to-end – see databricks/README.md.
+
+bundle:
+  name: krakow_air_quality
+
+variables:
+  catalog:
+    description: Unity Catalog catalog (Free Edition default is "workspace")
+    default: workspace
+  warehouse_id:
+    description: ID of the serverless SQL warehouse used by the dbt task
+  git_url:
+    description: URL of this repository
+    default: https://github.com/KarolGucwa/krakow-air-quality
+  ingest_mode:
+    description: "api = call GIOŚ/Open-Meteo from Databricks, repo = load raw Parquet committed by GitHub Actions"
+    default: repo
+
+targets:
+  dev:
+    mode: development
+    default: true
+
+resources:
+  jobs:
+    krakow_air_daily:
+      name: krakow-air-daily
+      schedule:
+        quartz_cron_expression: "0 30 6 * * ?"
+        timezone_id: Europe/Warsaw
+        pause_status: PAUSED          # unpause after the first manual run succeeds
+      git_source:
+        git_url: ${var.git_url}
+        git_provider: gitHub
+        git_branch: main
+      environments:
+        - environment_key: default
+          spec:
+            client: "2"
+            dependencies:
+              - requests
+              - pyyaml
+              - openpyxl
+        - environment_key: dbt
+          spec:
+            client: "2"
+            dependencies:
+              - dbt-databricks>=1.9,<2
+      tasks:
+        - task_key: ingest_raw
+          environment_key: default
+          spark_python_task:
+            python_file: databricks/notebooks/01_ingest_raw.py
+            source: GIT
+            parameters: ["--catalog", "${var.catalog}", "--mode", "${var.ingest_mode}"]
+
+        - task_key: raw_to_delta
+          depends_on: [{ task_key: ingest_raw }]
+          environment_key: default
+          spark_python_task:
+            python_file: databricks/notebooks/02_raw_to_delta.py
+            source: GIT
+            parameters: ["--catalog", "${var.catalog}"]
+
+        - task_key: dbt_build
+          depends_on: [{ task_key: raw_to_delta }]
+          environment_key: dbt
+          dbt_task:
+            # Databricks generates the connection profile for the SQL warehouse itself.
+            project_directory: dbt
+            commands:
+              - dbt deps
+              - dbt build
+            warehouse_id: ${var.warehouse_id}
+            catalog: ${var.catalog}
+            schema: krakow_air
+            source: GIT

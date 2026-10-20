@@ -1,0 +1,34 @@
+version: 2
+
+models:
+  - name: dq_rejected_measurements
+    description: Every measurement record excluded from the facts, with the reason.
+    columns:
+      - name: rejection_reason
+        data_tests:
+          - not_null
+          - accepted_values:
+              arguments:
+                values: [missing_value, negative_value, out_of_range, isolated_spike,
+                         superseded_duplicate, unparseable_timestamp]
+
+  - name: dq_station_monthly_report
+    description: Completeness, rejections and duplicates per station, pollutant and month.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [station_code, pollutant_code, month_start]
+    columns:
+      - name: expected_hours
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 1, max_value: 744 }
+      - name: completeness_pct
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 0, max_value: 100 }
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 75 }
+              config:
+                severity: warn       # a month below 75 % completeness deserves a look
+                where: "month_start < current_date - interval 31 day"

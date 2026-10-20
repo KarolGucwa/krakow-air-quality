@@ -1,0 +1,111 @@
+name: Daily pipeline
+
+# Once a day: extract -> commit raw -> dbt build (run + test) -> export marts ->
+# regression analysis -> commit marts -> dbt docs to GitHub Pages.
+# Raw data is committed before dbt runs, so a failing test never loses downloaded data.
+
+on:
+  schedule:
+    - cron: "17 5 * * *"     # 05:17 UTC = 06:17/07:17 in Kraków, after the night's hours are published
+  workflow_dispatch:
+    inputs:
+      force_metadata:
+        description: "Re-download station and sensor lists"
+        type: boolean
+        default: false
+
+permissions:
+  contents: write
+  pages: write
+  id-token: write
+
+concurrency:
+  group: data-pipeline      # shared with the backfill workflow: never two writers at once
+  cancel-in-progress: false
+
+jobs:
+  pipeline:
+    runs-on: ubuntu-latest
+    timeout-minutes: 45
+    env:
+      DUCKDB_PATH: warehouse/krakow_air.duckdb
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Extract (GIOŚ + Open-Meteo)
+        run: aq daily ${{ inputs.force_metadata && '--force-metadata' || '' }}
+
+      - name: Commit raw data
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/raw
+          git diff --cached --quiet || git commit -m "data: raw extract $(date -u +%F)"
+          git pull --rebase --autostash --quiet && git push
+
+      - name: dbt deps
+        run: dbt deps --project-dir dbt --profiles-dir dbt
+
+      - name: dbt source freshness
+        continue-on-error: true    # reported, but a late source should not block the build
+        run: dbt source freshness --project-dir dbt --profiles-dir dbt
+
+      - name: dbt build (run + test)
+        run: dbt build --project-dir dbt --profiles-dir dbt
+
+      - name: Export marts and run analysis
+        run: |
+          aq export-marts --data-mode real
+          python analysis/coal_ban_effect.py --marts data/marts --out docs/analysis/coal_ban_effect.md
+
+      - name: Commit marts
+        run: |
+          git add data/marts docs/analysis/coal_ban_effect.md
+          git diff --cached --quiet || git commit -m "data: marts $(date -u +%F)"
+          git pull --rebase --autostash --quiet && git push
+
+      - name: dbt docs
+        if: always()
+        run: |
+          dbt docs generate --project-dir dbt --profiles-dir dbt --static
+          mkdir -p site
+          cp dbt/target/static_index.html site/index.html
+
+      - name: Upload Pages artifact
+        if: always()
+        uses: actions/upload-pages-artifact@v3
+        with:
+          path: site
+
+      - name: Upload dbt artifacts
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: dbt-artifacts
+          path: |
+            dbt/target/run_results.json
+            dbt/target/sources.json
+            logs/dbt.log
+          if-no-files-found: ignore
+
+  docs:
+    needs: pipeline
+    if: always() && needs.pipeline.result != 'cancelled'
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deploy.outputs.page_url }}
+    steps:
+      - id: deploy
+        uses: actions/deploy-pages@v4

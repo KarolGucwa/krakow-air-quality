@@ -1,0 +1,65 @@
+version: 2
+
+models:
+  - name: int_gios__measurements_versioned
+    description: Every version of every (sensor, hour) with its rank among sources.
+    columns:
+      - name: version_rank
+        data_tests: [not_null]
+      - name: station_code
+        data_tests: [not_null]
+      - name: source_system
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [gios_api_current, gios_api_archive, gios_archive_file]
+
+  - name: int_gios__measurements_validated
+    description: Preferred version per (sensor, hour) with validation verdict.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [sensor_code, measured_at_utc]
+    columns:
+      - name: rejection_reason
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [missing_value, negative_value, out_of_range, isolated_spike]
+      - name: is_valid
+        data_tests: [not_null]
+
+  - name: int_weather__hourly
+    description: Deduplicated hourly weather (reanalysis preferred).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [location_id, observed_at_utc]
+    columns:
+      - name: temperature_c
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: -40, max_value: 45 }
+              config: { severity: warn }
+      - name: wind_speed_ms
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 0, max_value: 60 }
+              config: { severity: warn }
+      - name: relative_humidity_pct
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 0, max_value: 100 }
+              config: { severity: warn }
+
+  - name: int_weather__daily
+    description: Daily weather aggregates with heating degree days (Eurostat method).
+    columns:
+      - name: measurement_date
+        data_tests: [unique, not_null]
+
+  - name: int_measurements__with_weather
+    description: Valid hourly measurements with local time, CET-based date and weather.
+    columns:
+      - name: measurement_date
+        data_tests: [not_null]

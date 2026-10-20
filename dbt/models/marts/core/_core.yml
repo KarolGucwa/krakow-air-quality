@@ -1,0 +1,158 @@
+version: 2
+
+models:
+  - name: dim_station
+    description: Measurement stations in Kraków with location, type and district.
+    columns:
+      - name: station_code
+        description: GIOŚ station code ("Kod stacji").
+        data_tests: [unique, not_null]
+      - name: station_name
+        data_tests: [not_null]
+      - name: district_name
+        description: Kraków district from seeds/station_districts.csv.
+        data_tests:
+          - not_null:
+              config: { severity: warn }   # new station -> add it to the seed
+      - name: station_type
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['tło', 'komunikacyjna', 'przemysłowa']
+              config: { severity: warn }
+
+  - name: dim_pollutant
+    description: Pollutants with WHO 2021 guideline values and EU limit values.
+    columns:
+      - name: pollutant_code
+        data_tests:
+          - unique
+          - not_null
+          - accepted_values:
+              arguments:
+                values: ['PM10', 'PM2.5']
+
+  - name: dim_date
+    description: Calendar with seasons, heating seasons and the coal-ban period flag.
+    columns:
+      - name: date_day
+        data_tests: [unique, not_null]
+      - name: season
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [winter, spring, summer, autumn]
+      - name: iso_day_of_week
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 1, max_value: 7 }
+      - name: ban_period
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['before ban', 'after ban']
+
+  - name: fct_air_quality_hourly
+    description: >
+      Valid hourly PM concentrations per sensor with weather. Grain: sensor × hour.
+      `date_day` follows the EU convention for daily means (hours ending 01:00-24:00 CET).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [sensor_code, measured_at_utc]
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [station_code, pollutant_code, measured_at_utc]
+          config: { severity: warn }   # two instruments for one pollutant at one station
+    columns:
+      - name: measurement_key
+        data_tests: [unique, not_null]
+      - name: station_code
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_station')
+                field: station_code
+      - name: pollutant_code
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_pollutant')
+                field: pollutant_code
+      - name: date_day
+        data_tests:
+          - not_null
+          - relationships:
+              arguments:
+                to: ref('dim_date')
+                field: date_day
+      - name: value_ugm3
+        description: Concentration in µg/m³.
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 0, max_value: 1000 }
+          - no_isolated_spikes:
+              arguments:
+                partition_by: sensor_code
+                order_by: measured_at_utc
+          - max_hourly_change:
+              arguments:
+                partition_by: sensor_code
+                order_by: measured_at_utc
+                max_change: 250
+              config: { severity: warn }
+      - name: hour_local
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 0, max_value: 23 }
+      - name: temperature_c
+        description: Air temperature at 2 m (Open-Meteo); null when weather is not yet available.
+        data_tests:
+          - not_null:
+              config:
+                severity: warn
+                where: "measured_at_utc < current_date - interval 2 day"
+
+  - name: fct_air_quality_daily
+    description: Daily mean per station and pollutant, completeness flag, WHO/EU exceedances, weather.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [station_code, pollutant_code, date_day]
+    columns:
+      - name: daily_key
+        data_tests: [unique, not_null]
+      - name: valid_hours
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 1, max_value: 24 }   # CET-based day: always 24 hours
+      - name: mean_ugm3
+        data_tests:
+          - not_null
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 0, max_value: 1000 }
+      - name: exceeds_who_24h
+        description: Daily mean above the WHO 2021 24-hour guideline; NULL for incomplete days.
+
+exposures:
+  - name: streamlit_dashboard
+    label: Kraków air quality dashboard
+    type: dashboard
+    maturity: medium
+    url: https://share.streamlit.io/
+    description: Streamlit app (dashboard/app.py) reading Parquet exports of the marts.
+    depends_on:
+      - ref('dim_station')
+      - ref('dim_pollutant')
+      - ref('dim_date')
+      - ref('fct_air_quality_daily')
+      - ref('dq_station_monthly_report')
+      - ref('mart_heating_season_summary')
+      - ref('mart_coal_ban_weather_stratified')
+      - ref('mart_weekly_profile')
+      - ref('mart_weather_response')
+    owner:
+      name: Karol Gucwa

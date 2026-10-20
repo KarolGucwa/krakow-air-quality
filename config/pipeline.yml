@@ -1,0 +1,48 @@
+# Central configuration for the extraction layer.
+# dbt-specific settings (thresholds, ban date, ...) live in dbt/dbt_project.yml -> vars.
+
+city: "Kraków"                 # matched case- and diacritics-insensitively against GIOŚ station metadata
+pollutants: ["PM10", "PM2.5"]  # GIOŚ "Wskaźnik - kod" values to extract
+
+raw_dir: "data/raw"            # partitioned Parquet: <raw_dir>/<table>/ingestion_date=YYYY-MM-DD/<batch>.parquet
+
+gios:
+  base_url: "https://api.gios.gov.pl/pjp-api/v1/rest"
+  page_size: 500               # API maximum
+  timeout_s: 180              # archival requests take ~30 s per page
+  # Requests per minute, per GIOŚ documentation (powietrze.gios.gov.pl/pjp/content/api).
+  # Metadata and archival services are limited to 2 req/min; current data to 1500 req/min.
+  rate_limits_per_min:
+    metadata: 2
+    archive: 2
+    current: 300               # deliberately well below the 1500 limit
+  metadata_refresh_days: 7     # station/sensor lists are re-downloaded at most once a week
+  # archivalData/getDataBySensor accepts up to 366 days, but long windows time out on the
+  # server side; a month is 2 pages of 500 hourly values and answers in ~30 s.
+  archive_window_days: 31
+  # Format of dateFrom/dateTo in archival requests.
+  archive_date_format: "%Y-%m-%d %H:%M"
+  # Archive zip files (Bank danych pomiarowych) contain the whole country;
+  # only stations whose code starts with one of these prefixes are kept.
+  archive_station_code_prefixes: ["MpKrak"]
+
+weather:
+  # One reference point for the whole city (Rynek Główny). The reanalysis grid behind
+  # Open-Meteo's archive is coarser than the distance between Kraków stations, so
+  # per-station requests would return near-identical series.
+  location_id: "krakow_center"
+  latitude: 50.0614
+  longitude: 19.9366
+  archive_url: "https://archive-api.open-meteo.com/v1/archive"
+  forecast_url: "https://api.open-meteo.com/v1/forecast"
+  hourly_variables:
+    - temperature_2m
+    - relative_humidity_2m
+    - precipitation
+    - wind_speed_10m
+    - wind_direction_10m
+    - surface_pressure
+    - cloud_cover
+  wind_speed_unit: "ms"
+  archive_lag_days: 6          # reanalysis is published with a delay of a few days
+  forecast_past_days: 7        # daily run also fetches modelled recent past (replaced later by archive)

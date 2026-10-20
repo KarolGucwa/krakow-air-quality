@@ -1,0 +1,144 @@
+version: 2
+
+# dbt unit tests: fixed inputs -> expected output, run with `dbt test --select test_type:unit`
+# (and as part of every `dbt build`). They pin down the logic that is easiest to break:
+# time-zone handling, source preference and the validation rules.
+
+unit_tests:
+  - name: staging_converts_gios_timestamps_to_utc
+    description: >
+      Current API = local time with DST (summer: UTC+2), archival sources = fixed CET
+      (UTC+1). PM25 in a sensor code is normalised to PM2.5.
+    model: stg_gios__measurements
+    given:
+      # External (Parquet) sources cannot be introspected, so the fixture is given as SQL.
+      - input: source('raw', 'gios_measurements')
+        format: sql
+        rows: |
+          select '{"Kod stanowiska": "MpKrakAlKras-PM10-1g", "Data": "2026-07-01 12:00:00", "Wartość": 21.4}' as record_json,
+                 'gios_api_current' as source_system, 'b1' as batch_id, timestamp '2026-07-01 13:05:00' as ingested_at
+          union all
+          select '{"Kod stanowiska": "MpKrakAlKras-PM10-1g", "Data": "2026-07-01 12:00:00", "Wartość": 20.9}',
+                 'gios_api_archive', 'b2', timestamp '2026-08-01 00:00:00'
+          union all
+          select '{"Kod stanowiska": "MpKrakAlKras-PM25-1g", "Kod stacji": "MpKrakAlKras", "Data": "2019-01-15 01:00:00", "Wartość": 88.0}',
+                 'gios_archive_file', 'b3', timestamp '2026-09-01 00:00:00'
+          union all
+          select '{"Kod stanowiska": "MpKrakAlKras-PM10-1g", "Data": "2026-07-01 13:00:00", "Wartość": null}',
+                 'gios_api_current', 'b1', timestamp '2026-07-01 13:05:00'
+    expect:
+      rows:
+        - { source_system: gios_api_current, pollutant_code: PM10, measured_at_utc: "2026-07-01 10:00:00", value_ugm3: 21.4, source_priority: 3 }
+        - { source_system: gios_api_archive, pollutant_code: PM10, measured_at_utc: "2026-07-01 11:00:00", value_ugm3: 20.9, source_priority: 2 }
+        - { source_system: gios_archive_file, pollutant_code: PM2.5, measured_at_utc: "2019-01-15 00:00:00", value_ugm3: 88.0, source_priority: 1 }
+        - { source_system: gios_api_current, pollutant_code: PM10, measured_at_utc: "2026-07-01 11:00:00", value_ugm3: null, source_priority: 3 }
+
+  - name: versioning_prefers_verified_source_then_latest_download
+    description: >
+      The same hour from three sources: the yearly archive file wins although it was
+      downloaded earlier; between two current-API snapshots the newer one wins.
+    model: int_gios__measurements_versioned
+    given:
+      - input: ref('stg_gios__measurements')
+        rows:
+          - { raw_record_id: r1, sensor_code: S-PM10-1g, station_code_from_sensor: S, pollutant_code: PM10, averaging_period: 1g, measured_at_utc: "2025-01-10 05:00:00", value_ugm3: 50, source_system: gios_api_current, source_priority: 3, batch_id: b1, ingested_at: "2025-01-10 06:00:00" }
+          - { raw_record_id: r2, sensor_code: S-PM10-1g, station_code_from_sensor: S, pollutant_code: PM10, averaging_period: 1g, measured_at_utc: "2025-01-10 05:00:00", value_ugm3: 49, source_system: gios_archive_file, source_priority: 1, batch_id: b2, ingested_at: "2025-01-01 00:00:00" }
+          - { raw_record_id: r3, sensor_code: S-PM10-1g, station_code_from_sensor: S, pollutant_code: PM10, averaging_period: 1g, measured_at_utc: "2025-01-11 05:00:00", value_ugm3: 60, source_system: gios_api_current, source_priority: 3, batch_id: b3, ingested_at: "2025-01-11 06:00:00" }
+          - { raw_record_id: r4, sensor_code: S-PM10-1g, station_code_from_sensor: S, pollutant_code: PM10, averaging_period: 1g, measured_at_utc: "2025-01-11 05:00:00", value_ugm3: 61, source_system: gios_api_current, source_priority: 3, batch_id: b4, ingested_at: "2025-01-12 06:00:00" }
+          - { raw_record_id: r5, sensor_code: S-PM10-24g, station_code_from_sensor: S, pollutant_code: PM10, averaging_period: 24g, measured_at_utc: "2025-01-11 00:00:00", value_ugm3: 55, source_system: gios_api_archive, source_priority: 2, batch_id: b5, ingested_at: "2025-01-12 06:00:00" }
+      - input: ref('stg_gios__sensor_metadata')
+        rows:
+          - { sensor_code: S-PM10-1g, station_code: S }
+    expect:
+      rows:
+        - { raw_record_id: r1, station_code: S, version_rank: 2, version_count: 2 }
+        - { raw_record_id: r2, station_code: S, version_rank: 1, version_count: 2 }
+        - { raw_record_id: r3, station_code: S, version_rank: 2, version_count: 2 }
+        - { raw_record_id: r4, station_code: S, version_rank: 1, version_count: 2 }
+
+  - name: validation_rules_flag_bad_readings
+    description: >
+      Null, negative, absurd and isolated one-hour spike readings are rejected; a reading
+      next to a gap is not judged as a spike; a steep but sustained rise is kept.
+    model: int_gios__measurements_validated
+    given:
+      - input: ref('pollutants')
+        rows:
+          - { pollutant_code: PM10, max_plausible_ugm3: 1000 }
+      - input: ref('int_gios__measurements_versioned')
+        rows:
+          - { raw_record_id: h1, sensor_code: S, station_code: S, pollutant_code: PM10, measured_at_utc: "2025-01-10 01:00:00", value_ugm3: 20, version_rank: 1, version_count: 1 }
+          - { raw_record_id: h2, sensor_code: S, station_code: S, pollutant_code: PM10, measured_at_utc: "2025-01-10 02:00:00", value_ugm3: 410, version_rank: 1, version_count: 1 }
+          - { raw_record_id: h3, sensor_code: S, station_code: S, pollutant_code: PM10, measured_at_utc: "2025-01-10 03:00:00", value_ugm3: 24, version_rank: 1, version_count: 1 }
+          - { raw_record_id: h4, sensor_code: S, station_code: S, pollutant_code: PM10, measured_at_utc: "2025-01-10 04:00:00", value_ugm3: -3, version_rank: 1, version_count: 1 }
+          - { raw_record_id: h5, sensor_code: S, station_code: S, pollutant_code: PM10, measured_at_utc: "2025-01-10 05:00:00", value_ugm3: 9999, version_rank: 1, version_count: 1 }
+          - { raw_record_id: h6, sensor_code: S, station_code: S, pollutant_code: PM10, measured_at_utc: "2025-01-10 06:00:00", value_ugm3: null, version_rank: 1, version_count: 1 }
+          - { raw_record_id: h7, sensor_code: S, station_code: S, pollutant_code: PM10, measured_at_utc: "2025-01-10 09:00:00", value_ugm3: 400, version_rank: 1, version_count: 1 }
+          - { raw_record_id: h8, sensor_code: S, station_code: S, pollutant_code: PM10, measured_at_utc: "2025-01-10 10:00:00", value_ugm3: 30, version_rank: 1, version_count: 1 }
+          - { raw_record_id: h9, sensor_code: S, station_code: S, pollutant_code: PM10, measured_at_utc: "2025-01-10 11:00:00", value_ugm3: 210, version_rank: 1, version_count: 1 }
+          - { raw_record_id: h10, sensor_code: S, station_code: S, pollutant_code: PM10, measured_at_utc: "2025-01-10 12:00:00", value_ugm3: 240, version_rank: 1, version_count: 1 }
+          - { raw_record_id: h0, sensor_code: S, station_code: S, pollutant_code: PM10, measured_at_utc: "2025-01-10 01:00:00", value_ugm3: 99, version_rank: 2, version_count: 2 }
+    expect:
+      rows:
+        - { raw_record_id: h1, rejection_reason: null, is_valid: true }
+        - { raw_record_id: h2, rejection_reason: isolated_spike, is_valid: false }
+        - { raw_record_id: h3, rejection_reason: null, is_valid: true }
+        - { raw_record_id: h4, rejection_reason: negative_value, is_valid: false }
+        - { raw_record_id: h5, rejection_reason: out_of_range, is_valid: false }
+        - { raw_record_id: h6, rejection_reason: missing_value, is_valid: false }
+        - { raw_record_id: h7, rejection_reason: null, is_valid: true }
+        - { raw_record_id: h8, rejection_reason: null, is_valid: true }
+        - { raw_record_id: h9, rejection_reason: null, is_valid: true }
+        - { raw_record_id: h10, rejection_reason: null, is_valid: true }
+
+  - name: daily_mean_requires_18_valid_hours_for_exceedance
+    description: >
+      A day with 17 valid hours above the WHO guideline is not counted as an exceedance;
+      the same values with 18 hours are.
+    model: fct_air_quality_daily
+    given:
+      - input: ref('fct_air_quality_hourly')
+        format: sql
+        rows: |
+          select 'S' as station_code, 'PM10' as pollutant_code, date '2025-01-10' as date_day, 60.0 as value_ugm3
+          from range(17)
+          union all
+          select 'S', 'PM10', date '2025-01-11', 60.0 from range(18)
+      - input: ref('dim_pollutant')
+        rows:
+          - { pollutant_code: PM10, who_24h_ugm3: 45, eu_24h_limit_ugm3: 50 }
+      - input: ref('int_weather__daily')
+        rows: []
+    expect:
+      rows:
+        - { date_day: "2025-01-10", valid_hours: 17, is_complete_day: false, exceeds_who_24h: null, exceeds_eu_24h: null }
+        - { date_day: "2025-01-11", valid_hours: 18, is_complete_day: true, exceeds_who_24h: true, exceeds_eu_24h: true }
+
+  - name: staging_autumn_dst_hour_maps_to_one_utc_hour
+    description: >
+      On the last Sunday of October local 02:00 occurs twice. Both readings land on the
+      same UTC hour, so deduplication keeps one of them (documented limitation of
+      local-time timestamps in the current-data API). Which of the two UTC hours an
+      ambiguous local time resolves to is engine-specific (DuckDB: the later, CET; Spark:
+      the earlier, CEST), so the expectation is pinned for DuckDB only.
+    model: stg_gios__measurements
+    config:
+      enabled: "{{ target.type == 'duckdb' }}"
+    given:
+      - input: source('raw', 'gios_measurements')
+        format: sql
+        rows: |
+          select '{"Kod stanowiska": "S-PM10-1g", "Data": "2025-10-26 01:00:00", "Wartość": 30}' as record_json,
+                 'gios_api_current' as source_system, 'b1' as batch_id, timestamp '2025-10-26 06:00:00' as ingested_at
+          union all
+          select '{"Kod stanowiska": "S-PM10-1g", "Data": "2025-10-26 02:00:00", "Wartość": 31}', 'gios_api_current', 'b1', timestamp '2025-10-26 06:00:00'
+          union all
+          select '{"Kod stanowiska": "S-PM10-1g", "Data": "2025-10-26 02:00:00", "Wartość": 32}', 'gios_api_current', 'b1', timestamp '2025-10-26 06:00:00'
+          union all
+          select '{"Kod stanowiska": "S-PM10-1g", "Data": "2025-10-26 03:00:00", "Wartość": 33}', 'gios_api_current', 'b1', timestamp '2025-10-26 06:00:00'
+    expect:
+      rows:
+        - { value_ugm3: 30, measured_at_utc: "2025-10-25 23:00:00" }
+        - { value_ugm3: 31, measured_at_utc: "2025-10-26 01:00:00" }
+        - { value_ugm3: 32, measured_at_utc: "2025-10-26 01:00:00" }
+        - { value_ugm3: 33, measured_at_utc: "2025-10-26 02:00:00" }

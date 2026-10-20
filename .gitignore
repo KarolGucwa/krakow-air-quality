@@ -1,0 +1,46 @@
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.venv*/
+venv/
+.pytest_cache/
+.ruff_cache/
+
+# dbt
+dbt/target/
+dbt/dbt_packages/
+dbt/logs/
+logs/
+dbt/.user.yml
+
+# Warehouse files are rebuilt from the raw layer
+warehouse/*.duckdb
+warehouse/*.duckdb.wal
+
+# Large manual downloads (yearly GIOŚ zip packages) – parsed into data/raw instead
+data/landing/**
+!data/landing/**/
+!data/landing/**/.gitkeep
+
+# Synthetic demo data is generated on demand (make demo)
+data/sample/
+
+# Secrets
+.env
+.databrickscfg
+
+# OS / editors
+.DS_Store
+.idea/
+.vscode/
+
+# Local Spark (spark_local dbt target)
+metastore_db/
+derby.log
+spark-warehouse/
+warehouse/spark-warehouse/
+dbt/target_spark/
+
+# Local Claude Code settings
+.claude/

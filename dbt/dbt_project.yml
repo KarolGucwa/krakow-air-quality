@@ -1,0 +1,78 @@
+name: krakow_air
+version: "1.0.0"
+config-version: 2
+profile: krakow_air
+
+model-paths: ["models"]
+seed-paths: ["seeds"]
+test-paths: ["tests"]
+macro-paths: ["macros"]
+analysis-paths: ["analyses"]
+target-path: "target"
+clean-targets: ["target", "dbt_packages"]
+
+vars:
+  # Location of the raw Parquet layer, relative to the directory dbt is run from
+  # (the repository root; see Makefile). The demo uses data/sample/raw.
+  raw_path: "data/raw"
+  pollutants: ["PM10", "PM2.5"]
+  averaging_period: "1g"
+  # GIOŚ timestamp conventions (hour-ending timestamps):
+  #   archival service and yearly files: fixed CET (UTC+01:00) all year round;
+  #   current-data service: local time with daylight saving time (Europe/Warsaw).
+  # Verify after the first real run (see README, "Known uncertainties").
+  gios_current_timezone: "Europe/Warsaw"
+  gios_archive_utc_offset_hours: 1
+  local_timezone: "Europe/Warsaw"
+  weather_location_id: "krakow_center"   # must match weather.location_id in config/pipeline.yml
+  # Validation thresholds
+  isolated_spike_min_jump: 150      # µg/m³ above both neighbouring hours ...
+  isolated_spike_min_ratio: 3       # ... and at least N times their mean
+  daily_min_valid_hours: 18         # 75 % completeness rule for daily means
+  heating_season_months: [10, 11, 12, 1, 2, 3]
+  # Policy event analysed in marts/analysis
+  ban_effective_date: "2019-09-01"  # Małopolska anti-smog resolution: solid-fuel ban in Kraków
+  analysis_first_season_start_year: 2015
+  dim_date_start: "2015-01-01"
+
+seeds:
+  krakow_air:
+    +schema: reference
+    pollutants:
+      +column_types:
+        pollutant_code: string
+        who_24h_ugm3: double
+        who_annual_ugm3: double
+        eu_24h_limit_ugm3: double
+        eu_annual_limit_ugm3: double
+        max_plausible_ugm3: double
+    station_districts:
+      +column_types:
+        station_code: string
+        district_no: int
+        district_name: string
+
+models:
+  krakow_air:
+    staging:
+      +schema: staging
+      +materialized: view
+    intermediate:
+      +schema: intermediate
+      +materialized: table
+    marts:
+      +materialized: table
+      core:
+        +schema: marts
+      quality:
+        +schema: dq
+      analysis:
+        +schema: analysis
+
+data_tests:
+  krakow_air:
+    +store_failures: true
+    +schema: test_failures
+
+flags:
+  send_anonymous_usage_stats: false

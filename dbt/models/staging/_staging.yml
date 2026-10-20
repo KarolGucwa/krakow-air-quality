@@ -1,0 +1,82 @@
+version: 2
+
+models:
+  - name: stg_gios__measurements
+    description: >
+      Parsed GIOŚ measurement records, all sources and versions. `measured_at_utc` is the
+      END of the averaging hour in UTC (current API: local time with DST; archival service
+      and yearly files: fixed CET).
+    columns:
+      - name: raw_record_id
+        description: Hash of batch and record content.
+        data_tests:
+          - unique:
+              config: { severity: warn }
+      - name: sensor_code
+        description: GIOŚ "Kod stanowiska", e.g. MpKrakAlKras-PM10-1g.
+        data_tests: [not_null]
+      - name: pollutant_code
+        data_tests: [not_null]
+      - name: measured_at_utc
+        data_tests:
+          - not_null:
+              config: { severity: warn }   # unparseable dates are reported in dq_rejected_measurements
+      - name: value_ugm3
+        description: Concentration in µg/m³ as reported (may be null, negative or absurd).
+        data_tests:
+          - no_isolated_spikes:
+              arguments:
+                partition_by: sensor_code || source_system || batch_id
+                order_by: measured_at_utc
+              config:
+                severity: warn   # spikes are expected in raw data; they are removed downstream
+      - name: source_system
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [gios_api_current, gios_api_archive, gios_archive_file]
+      - name: source_priority
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [1, 2, 3]
+                quote: false
+
+  - name: stg_gios__station_metadata
+    description: Latest metadata per station from metadata/stations.
+    columns:
+      - name: station_code
+        data_tests: [unique, not_null]
+      - name: station_type
+        description: GIOŚ station classification (background / traffic / industrial).
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: ['tło', 'komunikacyjna', 'przemysłowa']
+              config: { severity: warn }
+      - name: latitude
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 49.9, max_value: 50.2 }   # Kraków bounding box
+              config: { severity: warn }
+      - name: longitude
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 19.7, max_value: 20.3 }
+              config: { severity: warn }
+
+  - name: stg_gios__sensor_metadata
+    description: Latest metadata per sensor from metadata/sensors.
+    columns:
+      - name: sensor_code
+        data_tests: [unique, not_null]
+      - name: station_code
+        data_tests: [not_null]
+
+  - name: stg_openmeteo__weather_hourly
+    description: Parsed Open-Meteo hourly records (all versions), timestamps in UTC.
+    columns:
+      - name: observed_at_utc
+        data_tests: [not_null]
+      - name: location_id
+        data_tests: [not_null]

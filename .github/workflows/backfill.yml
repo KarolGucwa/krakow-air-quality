@@ -1,0 +1,76 @@
+name: Backfill (manual)
+
+# History via the GIOŚ archival API (2 requests/minute -> slow, resumable) or Open-Meteo
+# reanalysis. Run repeatedly until the log says "Archive backfill complete"; progress is
+# kept in data/raw/_state and committed after every run.
+# Faster alternative for many years: download the yearly zip packages and run
+# `aq load-archive-files` locally (see README).
+
+on:
+  workflow_dispatch:
+    inputs:
+      source:
+        description: "What to backfill"
+        type: choice
+        options: [gios-api, weather]
+        default: weather
+      start:
+        description: "Start date (YYYY-MM-DD)"
+        required: true
+        default: "2015-01-01"
+      end:
+        description: "End date (YYYY-MM-DD), empty = default"
+        required: false
+        default: ""
+      max_minutes:
+        description: "Stop the GIOŚ backfill cleanly after N minutes"
+        default: "320"
+
+permissions:
+  contents: write
+
+concurrency:
+  group: data-pipeline
+  cancel-in-progress: false
+
+jobs:
+  backfill:
+    runs-on: ubuntu-latest
+    timeout-minutes: 350
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements*.txt
+
+      - name: Install
+        run: |
+          pip install -r requirements.txt
+          pip install -e .
+
+      - name: Backfill
+        env:
+          SOURCE: ${{ inputs.source }}
+          START: ${{ inputs.start }}
+          END: ${{ inputs.end }}
+          MAX_MINUTES: ${{ inputs.max_minutes }}
+        run: |
+          END_ARG=""; [ -n "$END" ] && END_ARG="--end $END"
+          if [ "$SOURCE" = "gios-api" ]; then
+            aq refresh-metadata
+            aq backfill-gios --start "$START" $END_ARG --max-minutes "$MAX_MINUTES"
+          else
+            aq backfill-weather --start "$START" $END_ARG
+          fi
+
+      - name: Commit raw data
+        if: always()
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git add data/raw
+          git diff --cached --quiet || git commit -m "data: backfill ${{ inputs.source }} from ${{ inputs.start }}"
+          git pull --rebase --autostash --quiet && git push

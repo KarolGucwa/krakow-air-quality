@@ -1,0 +1,5 @@
+# Optional: run the dbt project on local Apache Spark (Databricks SQL dialect check).
+# Kept separate because dbt-spark pins its own dbt-core version.
+dbt-core==1.12.5
+dbt-spark[session]==1.10.3
+pyspark==3.5.9

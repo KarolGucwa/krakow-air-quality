@@ -1,0 +1,33 @@
+version: 2
+
+seeds:
+  - name: pollutants
+    description: >
+      Reference values per pollutant. WHO = WHO Global Air Quality Guidelines 2021
+      (24-hour values are the 99th percentile guideline, i.e. ~3-4 exceedance days per year).
+      EU = limit values of Directive 2008/50/EC in force in Poland. `max_plausible_ugm3`
+      is the validation ceiling above which a reading is rejected as a device error.
+    columns:
+      - name: pollutant_code
+        data_tests: [unique, not_null]
+      - name: who_24h_ugm3
+        data_tests: [not_null]
+      - name: max_plausible_ugm3
+        data_tests: [not_null]
+
+  - name: station_districts
+    description: >
+      Mapping of GIOŚ station code to Kraków district (dzielnica). GIOŚ metadata has
+      coordinates but no district; the mapping was made by reverse geocoding the station
+      coordinates against OpenStreetMap district boundaries (Nominatim, 2026-10). Add a row
+      when a station appears; unmapped stations are reported by a warning-level test on
+      dim_station.
+    columns:
+      - name: station_code
+        data_tests: [unique, not_null]
+      - name: district_no
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments:
+                min_value: 1
+                max_value: 18

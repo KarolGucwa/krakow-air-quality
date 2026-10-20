@@ -1,0 +1,57 @@
+// Render: dot -Tsvg docs/architecture.dot -o docs/img/architecture.svg
+//         dot -Tpng -Gdpi=160 docs/architecture.dot -o docs/img/architecture.png
+digraph architecture {
+  graph [rankdir=TB, fontname="Helvetica", fontsize=12, nodesep=0.35, ranksep=0.55,
+         bgcolor="#fcfcfb", pad=0.3, newrank=true];
+  node  [shape=box, style="rounded,filled", fontname="Helvetica", fontsize=11, color="#c3c2b7",
+         fillcolor="white", fontcolor="#0b0b0b", margin="0.16,0.08"];
+  edge  [color="#898781", arrowsize=0.7, fontname="Helvetica", fontsize=9, fontcolor="#52514e"];
+
+  subgraph cluster_sources {
+    label="Sources"; fontcolor="#52514e"; color="#e1e0d9"; style="rounded";
+    gios_cur  [label="GIOŚ API v1\ndata/getData\n(last 3 days, local time)"];
+    gios_arch [label="GIOŚ API v1\narchivalData\n(CET, 2 req/min)"];
+    gios_zip  [label="GIOŚ Bank danych\nyearly zip / xlsx"];
+    meteo     [label="Open-Meteo\narchive + forecast"];
+  }
+
+  subgraph cluster_extract {
+    label="Python extractor  (src/aq_pipeline)"; fontcolor="#52514e"; color="#e1e0d9"; style="rounded";
+    extract [label="aq daily · backfill-gios\nload-archive-files · backfill-weather\nrate limit · retries · pagination", fillcolor="#cde2fb"];
+  }
+
+  raw [label="Raw layer\ndata/raw/<table>/ingestion_date=…/*.parquet\nrecord_json + ingested_at + batch_id", shape=cylinder, fillcolor="#f0efec"];
+
+  subgraph cluster_dbt {
+    label="dbt Core  (DuckDB · Databricks · Spark)"; fontcolor="#52514e"; color="#e1e0d9"; style="rounded";
+    stg  [label="staging\nparse JSON · types\nlocal / CET → UTC"];
+    int  [label="intermediate\nversioning & dedup\nvalidation · weather join"];
+    core [label="marts\nfct hourly / daily\ndim station · date · pollutant", fillcolor="#cde2fb"];
+    dq   [label="dq\nrejected records\nmonthly quality report"];
+    ana  [label="analysis\nheating seasons · coal ban\nweekly profile · weather"];
+    tests [label="tests: not_null · unique · accepted_values\nranges · relationships · freshness\nno_isolated_spikes · unit tests", shape=note, fillcolor="#fff7e6"];
+    stg -> int -> core -> ana;
+    {rank=same; core; dq;}
+    int -> dq;
+  }
+
+  subgraph cluster_out {
+    label="Outputs"; fontcolor="#52514e"; color="#e1e0d9"; style="rounded";
+    parquet [label="data/marts/*.parquet"];
+    app     [label="Streamlit dashboard", fillcolor="#cde2fb"];
+    reg     [label="OLS analysis\ncoal_ban_effect.py"];
+    docs    [label="dbt docs + lineage\nGitHub Pages"];
+  }
+
+  gha [label="GitHub Actions\nCI · daily 05:17 UTC · backfill", shape=component, fillcolor="#f0efec"];
+
+  {gios_cur gios_arch gios_zip meteo} -> extract;
+  extract -> raw;
+  raw -> stg;
+  tests -> int [style=dashed, arrowhead=none, color="#c3c2b7"];
+  {core dq ana} -> parquet;
+  parquet -> app;
+  parquet -> reg;
+  core -> docs [style=dashed];
+  gha -> extract [style=dotted, label="schedules"];
+}

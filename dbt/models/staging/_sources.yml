@@ -1,0 +1,65 @@
+version: 2
+
+sources:
+  - name: raw
+    description: >
+      Append-only raw layer written by the Python extractor (`src/aq_pipeline`). Every row
+      is one source record stored verbatim as JSON (`record_json`) plus load metadata.
+      On DuckDB the tables are read directly from partitioned Parquet files; on
+      Databricks the same names resolve to Delta tables in schema `raw`.
+    schema: raw
+    config:
+      meta:
+        external_location: "read_parquet('{{ var('raw_path') }}/{name}/*/*.parquet', hive_partitioning = true, union_by_name = true)"
+      loaded_at_field: ingested_at
+    tables:
+      - name: gios_measurements
+        description: >
+          Hourly measurements from three paths: `gios_api_current` (data/getData, last ~3 days,
+          unverified, local time), `gios_api_archive` (archivalData/getDataBySensor, CET) and
+          `gios_archive_file` (yearly packages from Bank danych pomiarowych, CET). The same hour
+          typically arrives several times.
+        config:
+          freshness:
+            warn_after: { count: 30, period: hour }
+            error_after: { count: 54, period: hour }
+        columns: &raw_columns
+          - name: record_json
+            description: Source record exactly as received (Polish field names).
+            data_tests: [not_null]
+          - name: source_system
+            data_tests:
+              - not_null
+              - accepted_values:
+                  arguments:
+                    values: [gios_api_current, gios_api_archive, gios_archive_file, gios_api,
+                             openmeteo_archive, openmeteo_forecast]
+          - name: endpoint
+          - name: request_params
+            description: JSON with the request parameters of the batch.
+          - name: ingested_at
+            description: UTC time the batch was downloaded.
+            data_tests: [not_null]
+          - name: batch_id
+            data_tests: [not_null]
+          - name: ingestion_date
+            description: Hive partition derived from ingested_at.
+
+      - name: gios_station_metadata
+        description: metadata/stations filtered to the configured city.
+        columns: *raw_columns
+      - name: gios_sensor_metadata
+        description: metadata/sensors for each station of the city.
+        columns: *raw_columns
+      - name: gios_sensors
+        description: station/sensors/{stationId}; numeric ids used by the extractor.
+        columns: *raw_columns
+      - name: openmeteo_weather_hourly
+        description: >
+          Hourly weather for one reference point in Kraków. `openmeteo_archive` = reanalysis
+          (preferred), `openmeteo_forecast` = forecast-model past days for the newest period.
+        config:
+          freshness:
+            warn_after: { count: 30, period: hour }
+            error_after: { count: 54, period: hour }
+        columns: *raw_columns

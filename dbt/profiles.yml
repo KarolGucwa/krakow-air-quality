@@ -1,0 +1,39 @@
+# dbt is run from the repository root:
+#   dbt build --project-dir dbt --profiles-dir dbt
+# so relative paths below are relative to the repository root.
+krakow_air:
+  target: "{{ env_var('DBT_TARGET', 'duckdb') }}"
+  outputs:
+    duckdb:
+      type: duckdb
+      path: "{{ env_var('DUCKDB_PATH', 'warehouse/krakow_air.duckdb') }}"
+      threads: 4
+      settings:
+        TimeZone: "UTC"
+
+    # Extended version: Databricks Free Edition (serverless SQL warehouse).
+    # pip install dbt-databricks, then set the variables below (see databricks/README.md).
+    databricks:
+      type: databricks
+      catalog: "{{ env_var('DATABRICKS_CATALOG', 'workspace') }}"
+      schema: "krakow_air"
+      host: "{{ env_var('DATABRICKS_HOST', 'unset') }}"
+      http_path: "{{ env_var('DATABRICKS_HTTP_PATH', 'unset') }}"
+      token: "{{ env_var('DATABRICKS_TOKEN', 'unset') }}"
+      threads: 4
+
+    # Local Apache Spark (pip install "dbt-spark[session]"): runs the Spark/Databricks SQL
+    # dialect of every model on a laptop or in CI without a Databricks workspace.
+    # Register the raw Parquet tables first: python scripts/register_spark_raw.py
+    spark_local:
+      type: spark
+      method: session
+      host: NA
+      schema: "krakow_air"
+      threads: 1
+      server_side_parameters:
+        "spark.sql.session.timeZone": "UTC"
+        "spark.driver.extraJavaOptions": "-Duser.timezone=UTC"
+        "spark.sql.warehouse.dir": "warehouse/spark-warehouse"
+        "spark.driver.memory": "3g"
+        "spark.sql.parquet.inferTimestampNTZ.enabled": "false"   # local Hive metastore has no TIMESTAMP_NTZ

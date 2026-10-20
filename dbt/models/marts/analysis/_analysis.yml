@@ -1,0 +1,35 @@
+version: 2
+
+models:
+  - name: mart_heating_season_summary
+    description: Per heating season (Oct-Mar) means, WHO/EU exceedance days and weather.
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [station_code, pollutant_code, heating_season]
+
+  - name: mart_coal_ban_weather_stratified
+    description: >
+      Before/after comparison of heating-season PM around the 2019-09-01 solid-fuel ban,
+      naive and weather-stratified (temperature × wind × rain bands).
+    data_tests:
+      - dbt_utils.unique_combination_of_columns:
+          arguments:
+            combination_of_columns: [station_code, pollutant_code]
+
+  - name: mart_weekly_profile
+    description: Mean concentration by ISO weekday and local hour, heating vs non-heating season.
+    columns:
+      - name: iso_day_of_week
+        data_tests:
+          - dbt_utils.accepted_range:
+              arguments: { min_value: 1, max_value: 7 }
+
+  - name: mart_weather_response
+    description: Mean daily PM by temperature band (2.5 °C) and wind band (0.5 m/s).
+    columns:
+      - name: driver
+        data_tests:
+          - accepted_values:
+              arguments:
+                values: [temperature, wind]

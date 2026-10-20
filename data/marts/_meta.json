@@ -1,0 +1,15 @@
+{
+  "data_mode": "real",
+  "exported_at": "2026-10-20T18:38:33+00:00",
+  "tables": [
+    "analysis__mart_coal_ban_weather_stratified.parquet",
+    "analysis__mart_heating_season_summary.parquet",
+    "analysis__mart_weather_response.parquet",
+    "analysis__mart_weekly_profile.parquet",
+    "dq__dq_station_monthly_report.parquet",
+    "marts__dim_date.parquet",
+    "marts__dim_pollutant.parquet",
+    "marts__dim_station.parquet",
+    "marts__fct_air_quality_daily.parquet"
+  ]
+}

@@ -1,13 +1,13 @@
 # Coal ban effect – weather-normalised regression
 
-Data exported: 2026-11-07T11:46:55+00:00. Heating-season days (Oct–Mar), city mean of stations with a complete day, HAC standard errors (7 lags).
+Data exported: 2026-11-08T11:58:54+00:00. Heating-season days (Oct–Mar), city mean of stations with a complete day, HAC standard errors (7 lags).
 
 | Pollutant | Specification | Days | Naive change | Weather-adjusted change | 95 % CI | p | R² |
 |---|---|---:|---:|---:|---:|---:|---:|
-| PM10 | no trend | 1950 | -37.3 % | **-37.5 %** | -41.3 … -33.5 % | 0.000 | 0.57 |
-| PM10 | with trend | 1950 | -37.3 % | **-6.0 %** | -14.5 … +3.2 % | 0.195 | 0.62 |
-| PM2.5 | no trend | 2102 | -40.4 % | **-40.7 %** | -44.6 … -36.6 % | 0.000 | 0.56 |
-| PM2.5 | with trend | 2102 | -40.4 % | **+2.3 %** | -8.0 … +13.6 % | 0.679 | 0.62 |
+| PM10 | no trend | 1951 | -37.2 % | **-37.5 %** | -41.2 … -33.4 % | 0.000 | 0.57 |
+| PM10 | with trend | 1951 | -37.2 % | **-6.0 %** | -14.5 … +3.3 % | 0.196 | 0.62 |
+| PM2.5 | no trend | 2103 | -40.4 % | **-40.7 %** | -44.6 … -36.5 % | 0.000 | 0.56 |
+| PM2.5 | with trend | 2103 | -40.4 % | **+2.3 %** | -7.9 … +13.6 % | 0.673 | 0.62 |
 
 How to read it:
 

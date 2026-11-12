@@ -1,6 +1,6 @@
 {
   "data_mode": "real",
-  "exported_at": "2026-11-11T12:46:45+00:00",
+  "exported_at": "2026-11-12T14:02:37+00:00",
   "tables": [
     "analysis__mart_coal_ban_weather_stratified.parquet",
     "analysis__mart_heating_season_summary.parquet",
